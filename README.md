@@ -1,6 +1,8 @@
 # Rule34 Gallery Mode
 
 A clean, immersive, full-screen gallery viewer for Rule34. Turns the standard pagination into a seamless scrolling feed.
+Note! This script is UAYOR. You may be rate limited or blocked from using Rule34 services.
+Currently only tested using Firefox & Violentmonkey, please let me know if you encounter any issues by making a post in [Issues](https://github.com/hawkslool/Rule34GalleryMode/issues).
 
 ## Features
 * **Immersive View:** Removes sidebar, ads, and clutter.
