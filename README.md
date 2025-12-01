@@ -1,2 +1,36 @@
-# Rule34GalleryMode
-ViolentMonkey script that adds the ability to enter Rule34 in "Gallery Mode".
+# Rule34 Gallery Mode
+
+A clean, immersive, full-screen gallery viewer for Rule34. Turns the standard pagination into a seamless scrolling feed.
+
+## Features
+* **Immersive View:** Removes sidebar, ads, and clutter.
+* **Full Resolution Only:** Automatically fetches the highest quality source (image or video).
+* **Smart Preloader:** Buffers the next 3 images in the background for instant navigation.
+* **Artist Metadata:** Displays the artist name in the bottom-left corner.
+* **Infinite Scroll:** Automatically jumps to the next page when you reach the end of the current list.
+
+## Installation
+1.  Install [Violentmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/).
+2.  [**Click here to Install the Script**](https://github.com/hawkslool/Rule34GalleryMode/raw/refs/heads/main/rule34-gallery-mode.user.js)
+
+## Controls
+* **Scroll / Arrow Down:** Next Image
+* **Arrow Up:** Previous Image
+* **Middle Click:** Open current image in new tab
+* **Escape:** Exit Gallery Mode
+
+## Previews
+
+**First time install + General controls:**
+
+https://github.com/user-attachments/assets/b63faaa4-f3fe-43ad-91f7-6298de4d642b
+
+---
+
+**Page flip + Auto-gallery continuation:**
+
+https://github.com/user-attachments/assets/ee4625dc-21db-4162-971e-3335ed3870ae
+
+---
+
+*vibe coded using grok (base) and gemini (majority)*
