@@ -9,6 +9,7 @@
 // @connect      rule34.xxx
 // @grant        GM_xmlhttpRequest
 // @run-at       document-end
+// @license MIT
 // ==/UserScript==
 
 (() => {
