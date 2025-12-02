@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rule34 Gallery Mode (Final Release)
 // @namespace    R34_Gallery_Mode
-// @version      1.7
+// @version      1.2
 // @description  Full-screen gallery. API Key toggle. Status updates. Retry button. Delayed auto-jump.
 // @author       hawkslool
 // @match        https://rule34.xxx/index.php?page=post&s=list*
