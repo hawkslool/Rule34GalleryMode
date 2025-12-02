@@ -27,6 +27,7 @@ Currently only tested using Firefox & Violentmonkey, please let me know if you e
 - Add detailed breakdown (and retry) on "loading preview" states
 - Delay page flipper by 3 seconds, interruptible by any key press
 - Add option to use your own API key for possible increased rate limits
+- (1.21) Hot-fixed auto page jump not respecting cancellation
 
 
 ## Previews
