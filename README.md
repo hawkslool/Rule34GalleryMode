@@ -21,6 +21,14 @@ Currently only tested using Firefox & Violentmonkey, please let me know if you e
 * **Middle Click:** Open current image in new tab
 * **Escape:** Exit Gallery Mode
 
+## Changelogs
+12/02: 
+- Gallery load will only be initiated when clicking (Gallery Mode) instead of automatically on each page load
+- Add detailed breakdown (and retry) on "loading preview" states
+- Delay page flipper by 3 seconds, interruptible by any key press
+- Add option to use your own API key for possible increased rate limits
+
+
 ## Previews
 
 **First time install + General controls:**
