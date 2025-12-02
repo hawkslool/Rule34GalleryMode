@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Rule34 Gallery Mode (Final Release)
+// @name         Rule34 Gallery Mode
 // @namespace    R34_Gallery_Mode
-// @version      1.2
-// @description  Full-screen gallery. API Key toggle. Status updates. Retry button. Delayed auto-jump.
+// @version      1.21
+// @description  Full-screen gallery. API Key toggle. Status updates. Retry button. Reliable Auto-jump.
 // @author       hawkslool
 // @match        https://rule34.xxx/index.php?page=post&s=list*
 // @connect      api.rule34.xxx
@@ -18,7 +18,7 @@
     // --- USER CONFIGURATION (PRIVATE) ---
 
     // SET THIS TO 'true' TO USE YOUR KEY, OR 'false' TO DISABLE IT
-    // AN API KEY IS NOT REQUIRED, BUT RECOMMENDED.
+    // API KEY IS NOT REQUIRED FOR THIS SCRIPT, BUT WILL WORK WELL WITH ONE!
     const USE_API_KEY = false;
 
     // YOUR API CREDENTIALS
@@ -51,10 +51,11 @@
     let ui = {};
     let preloadContainer = null;
 
-    // Timers
+    // Timers & Flags
     let retryTimeout = null;
     let jumpTimer = null;
     let countdownTimer = null;
+    let isJumping = false;
 
     // --- INITIALIZATION ---
     const init = () => {
@@ -334,7 +335,6 @@
                 });
             }
         } else {
-            // Loading State
             const loader = document.createElement('div');
             loader.id = 'r34-loader';
             loader.style = 'color:#0f0; font:bold 24px monospace; text-align:center; display:flex; flex-direction:column; align-items:center; gap:20px;';
@@ -345,7 +345,6 @@
 
             container.appendChild(loader);
 
-            // Retry Button Timer (3s)
             retryTimeout = setTimeout(() => {
                 if (document.getElementById('r34-loader')) {
                     const retryBtn = document.createElement('div');
@@ -444,6 +443,8 @@
 
     // --- NAVIGATION ---
     const nav = (dir) => {
+        if (isJumping) return; // Prevent navigation while jump countdown is active
+
         const nextIndex = currentIndex + dir;
 
         // --- JUMP LOGIC ---
@@ -466,6 +467,8 @@
         const nextUrl = nextBtn.href;
         ui.container.innerHTML = '';
 
+        isJumping = true; // Set flag to lock navigation
+
         // 1. Create Countdown UI
         const msgContainer = document.createElement('div');
         msgContainer.style = 'text-align:center;';
@@ -475,7 +478,7 @@
         msgContainer.appendChild(mainText);
 
         const subText = document.createElement('div');
-        subText.textContent = '(PRESS ANY KEY TO STOP)';
+        subText.textContent = '(PRESS ANY KEY OR SCROLL TO STOP)';
         subText.style = 'color:#fff;font-size:20px;margin-top:10px;animation:blink 1s infinite;';
         msgContainer.appendChild(subText);
 
@@ -491,11 +494,16 @@
                 e.stopPropagation();
             }
 
+            // Check if actually jumping
+            if (!isJumping) return;
+            isJumping = false; // Disable flag
+
             // Cleanup timers/listeners
             clearInterval(countdownTimer);
             clearTimeout(jumpTimer);
             document.removeEventListener('keydown', cancelJump);
             document.removeEventListener('mousedown', cancelJump);
+            document.removeEventListener('wheel', cancelJump);
 
             // Show Manual Button
             ui.container.innerHTML = '';
@@ -514,14 +522,17 @@
             ui.container.appendChild(manualBtn);
         };
 
-        // 3. Attach Interruption Listeners (Delayed slightly to avoid immediate trigger)
+        // 3. Attach Interruption Listeners (Delayed to allow inertia to die)
         setTimeout(() => {
+            if (!isJumping) return; // If cancelled in the micro-second before delay
             document.addEventListener('keydown', cancelJump);
             document.addEventListener('mousedown', cancelJump);
-        }, 100);
+            document.addEventListener('wheel', cancelJump, { passive: false });
+        }, 400);
 
         // 4. Start Countdown
         countdownTimer = setInterval(() => {
+            if (!isJumping) { clearInterval(countdownTimer); return; }
             timeLeft--;
             if (timeLeft > 0) {
                 mainText.textContent = `JUMPING TO NEXT PAGE IN ${timeLeft}...`;
@@ -530,9 +541,13 @@
 
         // 5. Execute Jump
         jumpTimer = setTimeout(() => {
+            if (!isJumping) return; // Final Safety Check
+
             document.removeEventListener('keydown', cancelJump);
             document.removeEventListener('mousedown', cancelJump);
+            document.removeEventListener('wheel', cancelJump);
             clearInterval(countdownTimer);
+
             sessionStorage.setItem('r34_gallery_autostart', 'true');
             window.location.href = nextUrl;
         }, 3000);
@@ -640,6 +655,7 @@
     const stopViewer = () => {
         active = false;
         document.body.style.overflow = '';
+        isJumping = false; // Reset jump flag
         if (jumpTimer) clearTimeout(jumpTimer);
         if (countdownTimer) clearInterval(countdownTimer);
         if (ui.root) ui.root.remove();
