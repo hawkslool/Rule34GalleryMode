@@ -1,33 +1,60 @@
 // ==UserScript==
-// @name         Rule34 Gallery Mode
+// @name         Rule34 Gallery Mode (Final Release)
 // @namespace    R34_Gallery_Mode
-// @version      1.0
-// @description  A clean, full-screen gallery viewer. Scroll to navigate, middle-click to open, artist metadata on hover.
+// @version      1.7
+// @description  Full-screen gallery. API Key toggle. Status updates. Retry button. Delayed auto-jump.
 // @author       hawkslool
 // @match        https://rule34.xxx/index.php?page=post&s=list*
 // @connect      api.rule34.xxx
 // @connect      rule34.xxx
 // @grant        GM_xmlhttpRequest
 // @run-at       document-end
-// @license MIT
+// @license      MIT
 // ==/UserScript==
 
 (() => {
     'use strict';
 
-    // --- CONFIGURATION ---
+    // --- USER CONFIGURATION (PRIVATE) ---
+
+    // SET THIS TO 'true' TO USE YOUR KEY, OR 'false' TO DISABLE IT
+    // AN API KEY IS NOT REQUIRED, BUT RECOMMENDED.
+    const USE_API_KEY = false;
+
+    // YOUR API CREDENTIALS
+    const API_KEY = 'KEY';
+    const USER_ID = 'UID';
+
+    // --- SCRIPT CONFIG ---
     const BUFFER_AHEAD = 3;
     const BUFFER_BEHIND = 1;
     const INTRO_VERSION = 'v1';
-    const API_BASE = 'https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&json=1';
+
+    // Logic to build the API URL
+    let baseUrl = 'https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&json=1';
+
+    if (USE_API_KEY && API_KEY && USER_ID) {
+        console.log('[R34 Gallery] Using Authenticated API Key');
+        baseUrl += `&api_key=${API_KEY}&user_id=${USER_ID}`;
+    } else {
+        console.log('[R34 Gallery] Running in Anonymous Mode');
+    }
+
+    const API_BASE = baseUrl;
 
     // --- STATE MANAGEMENT ---
     let postCache = new Map();
     let domList = [];
     let active = false;
+    let dataLoaded = false;
     let currentIndex = 0;
     let ui = {};
     let preloadContainer = null;
+
+    // Timers
+    let retryTimeout = null;
+    let jumpTimer = null;
+    let countdownTimer = null;
 
     // --- INITIALIZATION ---
     const init = () => {
@@ -48,31 +75,45 @@
 
         createButton();
 
-        // Invisible buffer
-        preloadContainer = document.createElement('div');
-        preloadContainer.id = 'r34-gallery-buffer';
-        preloadContainer.style = 'position:fixed;top:-9999px;left:-9999px;visibility:hidden;width:1px;height:1px;overflow:hidden;';
-        document.body.appendChild(preloadContainer);
-
-        // 2. Fetch API Data
-        fetchApiData();
-
-        // 3. Auto-start check (FIXED: Now matches correct button text)
         if (sessionStorage.getItem('r34_gallery_autostart') === 'true') {
-            const checkReady = setInterval(() => {
-                const btn = document.getElementById('r34-gallery-btn');
-                // FIX: Check for "GALLERY MODE" instead of "READY"
-                if (btn && btn.textContent.includes('GALLERY MODE')) {
-                    clearInterval(checkReady);
-                    sessionStorage.removeItem('r34_gallery_autostart');
-                    startViewer();
-                }
-            }, 100);
+            sessionStorage.removeItem('r34_gallery_autostart');
+            initiateConnection();
         }
     };
 
+    // --- CONNECTION LOGIC ---
+    const initiateConnection = () => {
+        if (active) return;
+        if (dataLoaded) {
+            startViewer();
+            return;
+        }
+
+        const btn = document.getElementById('r34-gallery-btn');
+        if (btn) {
+            btn.textContent = 'CONNECTING...';
+            btn.style.cursor = 'wait';
+            btn.style.borderColor = '#aa0';
+            btn.style.color = '#aa0';
+        }
+
+        if (!preloadContainer) {
+            preloadContainer = document.createElement('div');
+            preloadContainer.id = 'r34-gallery-buffer';
+            preloadContainer.style = 'position:fixed;top:-9999px;left:-9999px;visibility:hidden;width:1px;height:1px;overflow:hidden;';
+            document.body.appendChild(preloadContainer);
+        }
+
+        console.log('[R34 Gallery] Initiating Connection...');
+        fetchApiData(() => {
+            dataLoaded = true;
+            updateButtonState(true);
+            startViewer();
+        });
+    };
+
     // --- API & SCRAPER ---
-    const fetchApiData = () => {
+    const fetchApiData = (onSuccess) => {
         const urlParams = new URLSearchParams(window.location.search);
         const tags = urlParams.get('tags') || '';
         const pid = urlParams.get('pid') || 0;
@@ -106,20 +147,28 @@
                         });
                     }
                 } catch (e) { console.warn('[Gallery] API Parse failed'); }
-                updateButton(true);
+                if (onSuccess) onSuccess();
             },
-            onerror: () => updateButton(true)
+            onerror: () => {
+                alert("API Connection Failed.");
+                updateButtonState(false);
+            }
         });
     };
 
-    const scrapePost = (domItem, callback) => {
+    const scrapePost = (domItem, callback, statusCallback) => {
         if (domItem.scraping) return;
         domItem.scraping = true;
+
+        if (statusCallback) statusCallback("Fetching Source Page...");
 
         GM_xmlhttpRequest({
             method: "GET",
             url: domItem.viewUrl,
+            timeout: 10000,
             onload: (res) => {
+                if (statusCallback) statusCallback("Parsing HTML...");
+
                 const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
                 let foundUrl = null;
                 let type = 'image';
@@ -134,6 +183,8 @@
                     if (originalLink) foundUrl = originalLink.href;
                     else if (img) foundUrl = img.src;
                 }
+
+                if (statusCallback) statusCallback("Extracting Metadata...");
 
                 const artistLinks = Array.from(doc.querySelectorAll('li.tag-type-artist > a'))
                     .filter(a => !a.href.includes('page=wiki') && a.textContent !== '?');
@@ -155,8 +206,18 @@
                     });
 
                     if (callback) callback(foundUrl, type, artists);
+                } else {
+                    if (statusCallback) statusCallback("FAILED: No URL Found");
                 }
                 domItem.scraping = false;
+            },
+            onerror: () => {
+                domItem.scraping = false;
+                if (statusCallback) statusCallback("Network Error");
+            },
+            ontimeout: () => {
+                domItem.scraping = false;
+                if (statusCallback) statusCallback("Connection Timed Out");
             }
         });
     };
@@ -219,66 +280,41 @@
     const createButton = () => {
         const btn = document.createElement('div');
         btn.id = 'r34-gallery-btn';
-        btn.textContent = 'CONNECTING...';
+        btn.textContent = 'GALLERY MODE';
         btn.style = `
             position: fixed; top: 10px; right: 10px;
-            background: #000; color: #aa0; border: 4px solid #aa0;
+            background: #000; color: #0f0; border: 4px solid #0f0;
             padding: 12px 24px; font: bold 18px 'Courier New', monospace;
-            border-radius: 12px; cursor: wait; z-index: 999999;
+            border-radius: 12px; cursor: pointer; z-index: 999999;
             box-shadow: 0 0 15px #000; user-select: none; transition: 0.2s;
         `;
+        btn.onclick = initiateConnection;
         document.body.appendChild(btn);
     };
 
-    const updateButton = (ready) => {
+    const updateButtonState = (connected) => {
         const btn = document.getElementById('r34-gallery-btn');
         if (!btn) return;
-        if (ready) {
+        if (connected) {
             btn.textContent = 'GALLERY MODE';
             btn.style.borderColor = '#0f0';
             btn.style.color = '#0f0';
             btn.style.cursor = 'pointer';
             btn.onclick = startViewer;
+        } else {
+            btn.textContent = 'RETRY CONNECT';
+            btn.style.borderColor = '#f00';
+            btn.style.color = '#f00';
+            btn.style.cursor = 'pointer';
+            btn.onclick = initiateConnection;
         }
-    };
-
-    const showFirstTimeIntro = (root) => {
-        if (localStorage.getItem('r34_gallery_intro_seen') === INTRO_VERSION) return;
-
-        const overlay = document.createElement('div');
-        overlay.style = `
-            position: absolute; inset: 0; background: rgba(0,0,0,0.85); z-index: 9999999999;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            color: #fff; font-family: sans-serif; text-align: center;
-        `;
-
-        overlay.innerHTML = `
-            <div style="background:#222; border: 2px solid #0f0; border-radius: 15px; padding: 40px; max-width: 500px; box-shadow: 0 0 30px #0f0;">
-                <h2 style="margin-top:0; color:#0f0; font-family:'Courier New', monospace;">WELCOME TO GALLERY MODE</h2>
-                <div style="text-align:left; margin: 20px 0; font-size: 18px; line-height: 1.6;">
-                    <p><strong>🖱 SCROLL / ARROWS:</strong> Navigate Up/Down</p>
-                    <p><strong>🖱 MIDDLE CLICK:</strong> Open Full Res in New Tab</p>
-                    <p><strong>❌ ESCAPE:</strong> Exit Gallery Mode</p>
-                    <p><strong>🎨 ARTIST INFO:</strong> Displayed in Bottom Left</p>
-                </div>
-                <button id="r34-intro-close" style="
-                    background: #0f0; color: #000; border: none; padding: 10px 30px;
-                    font-size: 20px; font-weight: bold; cursor: pointer; border-radius: 5px;
-                ">GOT IT</button>
-            </div>
-        `;
-
-        root.appendChild(overlay);
-
-        document.getElementById('r34-intro-close').onclick = () => {
-            overlay.remove();
-            localStorage.setItem('r34_gallery_intro_seen', INTRO_VERSION);
-        };
     };
 
     // --- RENDERER ---
     const renderMedia = () => {
         if (!active) return;
+
+        if (retryTimeout) clearTimeout(retryTimeout);
 
         const domItem = domList[currentIndex];
         const { container, counter, artistPanel } = ui;
@@ -298,18 +334,52 @@
                 });
             }
         } else {
+            // Loading State
             const loader = document.createElement('div');
-            loader.innerHTML = 'LOADING FULL RES...<br><span style="font-size:16px;color:#666">(Fetching Original Source)</span>';
-            loader.style = 'color:#0f0; font:bold 24px monospace; text-align:center;';
+            loader.id = 'r34-loader';
+            loader.style = 'color:#0f0; font:bold 24px monospace; text-align:center; display:flex; flex-direction:column; align-items:center; gap:20px;';
+
+            const statusText = document.createElement('div');
+            statusText.innerHTML = 'LOADING FULL RES...<br><span id="r34-status" style="font-size:16px;color:#666">Connecting...</span>';
+            loader.appendChild(statusText);
+
             container.appendChild(loader);
 
-            scrapePost(domItem, (realUrl, realType, artists) => {
-                if (active && currentIndex === domItem.index) {
-                    container.innerHTML = '';
-                    renderElement(realUrl, realType, container, domItem);
-                    renderArtists(artists, artistPanel);
+            // Retry Button Timer (3s)
+            retryTimeout = setTimeout(() => {
+                if (document.getElementById('r34-loader')) {
+                    const retryBtn = document.createElement('div');
+                    retryBtn.textContent = '⚠️ TOOK TOO LONG? CLICK TO RETRY';
+                    retryBtn.style = `
+                        border: 2px solid #f00; color: #f00; padding: 10px 20px; cursor: pointer;
+                        font-size: 18px; border-radius: 8px; background: #200; transition: 0.2s;
+                    `;
+                    retryBtn.onmouseover = () => retryBtn.style.background = '#400';
+                    retryBtn.onmouseout = () => retryBtn.style.background = '#200';
+                    retryBtn.onclick = () => {
+                         domItem.scraping = false;
+                         renderMedia();
+                    };
+                    loader.appendChild(retryBtn);
                 }
-            });
+            }, 3000);
+
+            scrapePost(domItem,
+                (realUrl, realType, artists) => {
+                    if (active && currentIndex === domItem.index) {
+                        clearTimeout(retryTimeout);
+                        container.innerHTML = '';
+                        renderElement(realUrl, realType, container, domItem);
+                        renderArtists(artists, artistPanel);
+                    }
+                },
+                (statusMsg) => {
+                    if (active && currentIndex === domItem.index) {
+                        const el = document.getElementById('r34-status');
+                        if (el) el.textContent = statusMsg;
+                    }
+                }
+            );
         }
 
         addNavZones(container);
@@ -375,21 +445,97 @@
     // --- NAVIGATION ---
     const nav = (dir) => {
         const nextIndex = currentIndex + dir;
+
+        // --- JUMP LOGIC ---
         if (nextIndex >= domList.length) {
-            const nextBtn = document.querySelector('a[alt="next"]');
-            if (nextBtn) {
-                ui.container.innerHTML = '';
-                const msg = document.createElement('div');
-                msg.textContent = 'JUMPING TO NEXT PAGE >>';
-                msg.style = 'color:#0f0;font:bold 40px monospace;background:#000;padding:20px;';
-                ui.container.appendChild(msg);
-                sessionStorage.setItem('r34_gallery_autostart', 'true');
-                window.location.href = nextBtn.href;
-            } else alert("End of results.");
+            triggerPageJump();
             return;
         }
+
         currentIndex = (nextIndex < 0) ? domList.length - 1 : nextIndex;
         renderMedia();
+    };
+
+    const triggerPageJump = () => {
+        const nextBtn = document.querySelector('a[alt="next"]');
+        if (!nextBtn) {
+            alert("End of results.");
+            return;
+        }
+
+        const nextUrl = nextBtn.href;
+        ui.container.innerHTML = '';
+
+        // 1. Create Countdown UI
+        const msgContainer = document.createElement('div');
+        msgContainer.style = 'text-align:center;';
+
+        const mainText = document.createElement('div');
+        mainText.style = 'color:#0f0;font:bold 40px monospace;background:#000;padding:20px;border:4px solid #0f0;';
+        msgContainer.appendChild(mainText);
+
+        const subText = document.createElement('div');
+        subText.textContent = '(PRESS ANY KEY TO STOP)';
+        subText.style = 'color:#fff;font-size:20px;margin-top:10px;animation:blink 1s infinite;';
+        msgContainer.appendChild(subText);
+
+        ui.container.appendChild(msgContainer);
+
+        let timeLeft = 3;
+        mainText.textContent = `JUMPING TO NEXT PAGE IN ${timeLeft}...`;
+
+        // 2. Cancellation Logic
+        const cancelJump = (e) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            // Cleanup timers/listeners
+            clearInterval(countdownTimer);
+            clearTimeout(jumpTimer);
+            document.removeEventListener('keydown', cancelJump);
+            document.removeEventListener('mousedown', cancelJump);
+
+            // Show Manual Button
+            ui.container.innerHTML = '';
+            const manualBtn = document.createElement('div');
+            manualBtn.textContent = 'JUMP TO NEXT PAGE >>';
+            manualBtn.style = `
+                color: #0f0; font: bold 40px monospace; background: #000; padding: 30px;
+                border: 4px solid #0f0; cursor: pointer; transition: 0.2s;
+            `;
+            manualBtn.onmouseover = () => { manualBtn.style.background = '#0f0'; manualBtn.style.color = '#000'; };
+            manualBtn.onmouseout = () => { manualBtn.style.background = '#000'; manualBtn.style.color = '#0f0'; };
+            manualBtn.onclick = () => {
+                sessionStorage.setItem('r34_gallery_autostart', 'true');
+                window.location.href = nextUrl;
+            };
+            ui.container.appendChild(manualBtn);
+        };
+
+        // 3. Attach Interruption Listeners (Delayed slightly to avoid immediate trigger)
+        setTimeout(() => {
+            document.addEventListener('keydown', cancelJump);
+            document.addEventListener('mousedown', cancelJump);
+        }, 100);
+
+        // 4. Start Countdown
+        countdownTimer = setInterval(() => {
+            timeLeft--;
+            if (timeLeft > 0) {
+                mainText.textContent = `JUMPING TO NEXT PAGE IN ${timeLeft}...`;
+            }
+        }, 1000);
+
+        // 5. Execute Jump
+        jumpTimer = setTimeout(() => {
+            document.removeEventListener('keydown', cancelJump);
+            document.removeEventListener('mousedown', cancelJump);
+            clearInterval(countdownTimer);
+            sessionStorage.setItem('r34_gallery_autostart', 'true');
+            window.location.href = nextUrl;
+        }, 3000);
     };
 
     // --- VIEWER OVERLAY ---
@@ -465,17 +611,38 @@
             if (e.button === 1) { e.preventDefault(); e.stopPropagation(); openCurrentImg(); }
         };
 
-        // --- INTRO CHECK ---
         showFirstTimeIntro(d);
-
         renderMedia();
+    };
+
+    const showFirstTimeIntro = (root) => {
+        if (localStorage.getItem('r34_gallery_intro_seen') === INTRO_VERSION) return;
+        const overlay = document.createElement('div');
+        overlay.style = 'position:absolute;inset:0;background:rgba(0,0,0,0.85);z-index:9999999999;display:flex;flex-direction:column;justify-content:center;align-items:center;color:#fff;font-family:sans-serif;text-align:center;';
+        overlay.innerHTML = `
+            <div style="background:#222; border: 2px solid #0f0; border-radius: 15px; padding: 40px; max-width: 500px; box-shadow: 0 0 30px #0f0;">
+                <h2 style="margin-top:0; color:#0f0; font-family:'Courier New', monospace;">WELCOME TO GALLERY MODE</h2>
+                <div style="text-align:left; margin: 20px 0; font-size: 18px; line-height: 1.6;">
+                    <p><strong>🖱 SCROLL / ARROWS:</strong> Navigate Up/Down</p>
+                    <p><strong>🖱 MIDDLE CLICK:</strong> Open Full Res in New Tab</p>
+                    <p><strong>❌ ESCAPE:</strong> Exit Gallery Mode</p>
+                    <p><strong>🎨 ARTIST INFO:</strong> Displayed in Bottom Left</p>
+                </div>
+                <button id="r34-intro-close" style="background: #0f0; color: #000; border: none; padding: 10px 30px; font-size: 20px; font-weight: bold; cursor: pointer; border-radius: 5px;">GOT IT</button>
+            </div>`;
+        root.appendChild(overlay);
+        document.getElementById('r34-intro-close').onclick = () => {
+            overlay.remove();
+            localStorage.setItem('r34_gallery_intro_seen', INTRO_VERSION);
+        };
     };
 
     const stopViewer = () => {
         active = false;
         document.body.style.overflow = '';
+        if (jumpTimer) clearTimeout(jumpTimer);
+        if (countdownTimer) clearInterval(countdownTimer);
         if (ui.root) ui.root.remove();
-        sessionStorage.removeItem('r34_gallery_autostart');
     };
 
     init();
